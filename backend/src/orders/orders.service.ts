@@ -53,6 +53,7 @@ export class OrdersService {
           userId,
           status: 'PENDING_PAYMENT',
           totalAmount,
+          reservedUntil: cart.expiresAt,
           items: {
             create: cart.items.map((item) => ({
               flashSaleId: item.flashSaleId,
