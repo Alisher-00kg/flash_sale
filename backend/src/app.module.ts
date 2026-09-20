@@ -6,9 +6,18 @@ import { AuthModule } from './auth/auth.module';
 import { ProductsModule } from './products/products.module';
 import { FlashSalesModule } from './flash-sales/flash-sales.module';
 import { CartModule } from './cart/cart.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
-  imports: [PrismaModule, UsersModule, AuthModule, ProductsModule, FlashSalesModule, CartModule],
+  imports: [
+    PrismaModule,
+    UsersModule,
+    AuthModule,
+    ProductsModule,
+    FlashSalesModule,
+    CartModule,
+    ScheduleModule.forRoot(),
+  ],
   controllers: [AppController],
 })
 export class AppModule {}

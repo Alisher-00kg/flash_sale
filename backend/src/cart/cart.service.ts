@@ -76,4 +76,26 @@ export class CartService {
       return cart;
     });
   }
+  async getActiveCart(userId: string) {
+    return this.prisma.cart.findFirst({
+      where: {
+        userId,
+        status: 'ACTIVE',
+      },
+      include: {
+        items: {
+          include: {
+            flashSale: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
 }
