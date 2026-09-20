@@ -35,7 +35,11 @@ export class PaymentsService {
       if (order.userId !== userId) {
         throw new ForbiddenException('You cannot pay this order');
       }
-
+      if (order.status === 'PENDING_PAYMENT') {
+        if (order.reservedUntil <= new Date()) {
+          throw new BadRequestException('Order reservation has expired');
+        }
+      }
       if (order.status === 'PAID') {
         return {
           orderId: order.id,
