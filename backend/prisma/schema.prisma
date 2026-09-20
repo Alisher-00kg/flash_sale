@@ -103,6 +103,7 @@ model Order {
   userId      String
   status      OrderStatus @default(PENDING_PAYMENT)
   totalAmount Decimal     @db.Decimal(10, 2)
+  reservedUntil DateTime?
   createdAt   DateTime    @default(now())
 
   user    User        @relation(fields: [userId], references: [id])
