@@ -1,0 +1,245 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+
+@Injectable()
+export class PaymentsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async startPayment(userId: string, orderId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id
+        FROM "Order"
+        WHERE id = ${orderId}
+        FOR UPDATE
+      `;
+
+      const order = await tx.order.findUnique({
+        where: {
+          id: orderId,
+        },
+        include: {
+          payment: true,
+        },
+      });
+
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+
+      if (order.userId !== userId) {
+        throw new ForbiddenException('You cannot pay this order');
+      }
+
+      if (order.status === 'PAID') {
+        return {
+          orderId: order.id,
+          orderStatus: order.status,
+          payment: order.payment,
+        };
+      }
+
+      if (order.status === 'PAYMENT_PROCESSING') {
+        return {
+          orderId: order.id,
+          orderStatus: order.status,
+          payment: order.payment,
+        };
+      }
+
+      if (order.status !== 'PENDING_PAYMENT') {
+        throw new BadRequestException(
+          `Cannot start payment for order with status ${order.status}`,
+        );
+      }
+
+      const payment = await tx.payment.upsert({
+        where: {
+          orderId: order.id,
+        },
+        create: {
+          orderId: order.id,
+          status: 'PENDING',
+        },
+        update: {
+          status: 'PENDING',
+        },
+      });
+
+      const updatedOrder = await tx.order.update({
+        where: {
+          id: order.id,
+        },
+        data: {
+          status: 'PAYMENT_PROCESSING',
+        },
+      });
+
+      return {
+        orderId: updatedOrder.id,
+        orderStatus: updatedOrder.status,
+        payment,
+      };
+    });
+  }
+  async processMockPayment(
+    userId: string,
+    orderId: string,
+    result: 'SUCCESS' | 'FAILED' | 'PENDING',
+    delayMs = 0,
+  ) {
+    const payment = await this.prisma.payment.findUnique({
+      where: {
+        orderId,
+      },
+      include: {
+        order: true,
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    if (payment.order.userId !== userId) {
+      throw new ForbiddenException('You cannot process this payment');
+    }
+
+    if (payment.status !== 'PENDING') {
+      return {
+        orderId,
+        orderStatus: payment.order.status,
+        paymentStatus: payment.status,
+      };
+    }
+
+    if (result === 'PENDING') {
+      return {
+        orderId,
+        orderStatus: payment.order.status,
+        paymentStatus: payment.status,
+        message: 'Payment is still pending',
+      };
+    }
+
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+      SELECT id
+      FROM "Payment"
+      WHERE id = ${payment.id}
+      FOR UPDATE
+    `;
+
+      const currentPayment = await tx.payment.findUnique({
+        where: {
+          id: payment.id,
+        },
+        include: {
+          order: {
+            include: {
+              items: true,
+            },
+          },
+        },
+      });
+
+      if (!currentPayment) {
+        throw new NotFoundException('Payment not found');
+      }
+
+      if (currentPayment.status !== 'PENDING') {
+        return {
+          orderId,
+          orderStatus: currentPayment.order.status,
+          paymentStatus: currentPayment.status,
+        };
+      }
+
+      if (result === 'SUCCESS') {
+        await tx.payment.update({
+          where: {
+            id: currentPayment.id,
+          },
+          data: {
+            status: 'SUCCESS',
+            externalId: `mock-${currentPayment.id}`,
+          },
+        });
+
+        await tx.order.update({
+          where: {
+            id: orderId,
+          },
+          data: {
+            status: 'PAID',
+          },
+        });
+
+        for (const item of currentPayment.order.items) {
+          await tx.flashSale.update({
+            where: {
+              id: item.flashSaleId,
+            },
+            data: {
+              soldQuantity: {
+                increment: item.quantity,
+              },
+            },
+          });
+        }
+
+        return {
+          orderId,
+          orderStatus: 'PAID',
+          paymentStatus: 'SUCCESS',
+        };
+      }
+
+      await tx.payment.update({
+        where: {
+          id: currentPayment.id,
+        },
+        data: {
+          status: 'FAILED',
+        },
+      });
+
+      await tx.order.update({
+        where: {
+          id: orderId,
+        },
+        data: {
+          status: 'PAYMENT_FAILED',
+        },
+      });
+
+      for (const item of currentPayment.order.items) {
+        await tx.flashSale.update({
+          where: {
+            id: item.flashSaleId,
+          },
+          data: {
+            availableQuantity: {
+              increment: item.quantity,
+            },
+          },
+        });
+      }
+
+      return {
+        orderId,
+        orderStatus: 'PAYMENT_FAILED',
+        paymentStatus: 'FAILED',
+      };
+    });
+  }
+}
