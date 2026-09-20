@@ -7,6 +7,7 @@ import { ProductsModule } from './products/products.module';
 import { FlashSalesModule } from './flash-sales/flash-sales.module';
 import { CartModule } from './cart/cart.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     FlashSalesModule,
     CartModule,
     ScheduleModule.forRoot(),
+    OrdersModule,
   ],
   controllers: [AppController],
 })
