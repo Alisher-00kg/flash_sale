@@ -5,10 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly websocketGateway: WebsocketGateway,
+  ) {}
 
   async startPayment(userId: string, orderId: string) {
     return this.prisma.$transaction(async (tx) => {
@@ -135,7 +139,16 @@ export class PaymentsService {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const paymentResult: {
+      orderId: string;
+      orderStatus: string;
+      paymentStatus: string;
+      stockUpdates?: {
+        flashSaleId: string;
+        availableQuantity: number;
+        soldQuantity: number;
+      }[];
+    } = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`
       SELECT id
       FROM "Payment"
@@ -188,8 +201,14 @@ export class PaymentsService {
           },
         });
 
+        const stockUpdates: {
+          flashSaleId: string;
+          availableQuantity: number;
+          soldQuantity: number;
+        }[] = [];
+
         for (const item of currentPayment.order.items) {
-          await tx.flashSale.update({
+          const flashSale = await tx.flashSale.update({
             where: {
               id: item.flashSaleId,
             },
@@ -199,12 +218,19 @@ export class PaymentsService {
               },
             },
           });
+
+          stockUpdates.push({
+            flashSaleId: flashSale.id,
+            availableQuantity: flashSale.availableQuantity,
+            soldQuantity: flashSale.soldQuantity,
+          });
         }
 
         return {
           orderId,
           orderStatus: 'PAID',
           paymentStatus: 'SUCCESS',
+          stockUpdates,
         };
       }
 
@@ -245,5 +271,16 @@ export class PaymentsService {
         paymentStatus: 'FAILED',
       };
     });
+    if (result === 'SUCCESS' && paymentResult.stockUpdates) {
+      for (const stock of paymentResult.stockUpdates) {
+        this.websocketGateway.emitStockUpdated(
+          stock.flashSaleId,
+          stock.availableQuantity,
+          stock.soldQuantity,
+        );
+      }
+    }
+
+    return paymentResult;
   }
 }
