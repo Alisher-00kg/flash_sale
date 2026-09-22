@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+
 import { PrismaService } from '../prisma/prisma.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
-export class CartExpiryService {
-  private readonly logger = new Logger(CartExpiryService.name);
+export class OrderExpiryService {
+  private readonly logger = new Logger(OrderExpiryService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -13,13 +14,13 @@ export class CartExpiryService {
   ) {}
 
   @Cron('*/5 * * * * *')
-  async handleExpiredCarts() {
+  async handleExpiredOrders() {
     const now = new Date();
 
-    const expiredCarts = await this.prisma.cart.findMany({
+    const expiredOrders = await this.prisma.order.findMany({
       where: {
-        status: 'ACTIVE',
-        expiresAt: {
+        status: 'PENDING_PAYMENT',
+        reservedUntil: {
           lte: now,
         },
       },
@@ -28,29 +29,39 @@ export class CartExpiryService {
       },
     });
 
-    for (const cart of expiredCarts) {
-      const result = await this.prisma.$transaction(async (tx) => {
-        const updatedCart = await tx.cart.updateMany({
+    for (const order of expiredOrders) {
+      const stockUpdates = await this.prisma.$transaction(async (tx) => {
+        const updatedOrder = await tx.order.updateMany({
           where: {
-            id: cart.id,
-            status: 'ACTIVE',
+            id: order.id,
+            status: 'PENDING_PAYMENT',
+            reservedUntil: {
+              lte: now,
+            },
           },
           data: {
             status: 'EXPIRED',
           },
         });
 
-        if (updatedCart.count === 0) {
+        if (updatedOrder.count === 0) {
           return [];
         }
 
-        const updatedFlashSales: {
+        const updates: {
           flashSaleId: string;
           availableQuantity: number;
           soldQuantity: number;
         }[] = [];
 
-        for (const item of cart.items) {
+        for (const item of order.items) {
+          await tx.$queryRaw`
+            SELECT id
+            FROM "FlashSale"
+            WHERE id = ${item.flashSaleId}
+            FOR UPDATE
+          `;
+
           const flashSale = await tx.flashSale.findUnique({
             where: {
               id: item.flashSaleId,
@@ -76,24 +87,25 @@ export class CartExpiryService {
             },
           });
 
-          updatedFlashSales.push({
+          updates.push({
             flashSaleId: updatedFlashSale.id,
             availableQuantity: updatedFlashSale.availableQuantity,
             soldQuantity: updatedFlashSale.soldQuantity,
           });
         }
-        return updatedFlashSales;
+
+        return updates;
       });
 
-      for (const flashSale of result) {
+      for (const stock of stockUpdates) {
         this.websocketGateway.emitStockUpdated(
-          flashSale.flashSaleId,
-          flashSale.availableQuantity,
-          flashSale.soldQuantity,
+          stock.flashSaleId,
+          stock.availableQuantity,
+          stock.soldQuantity,
         );
       }
 
-      this.logger.log(`Expired cart: ${cart.id}`);
+      this.logger.log(`Expired order: ${order.id}`);
     }
   }
 }

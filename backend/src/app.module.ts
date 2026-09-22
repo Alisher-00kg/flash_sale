@@ -9,6 +9,9 @@ import { CartModule } from './cart/cart.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
+import { WebsocketGateway } from './websocket/websocket.gateway';
+import { WebsocketModule } from './websocket/websocket.module';
+import { OrderExpiryModule } from './order-expiry/order-expiry.module';
 
 @Module({
   imports: [
@@ -21,7 +24,10 @@ import { PaymentsModule } from './payments/payments.module';
     ScheduleModule.forRoot(),
     OrdersModule,
     PaymentsModule,
+    WebsocketModule,
+    OrderExpiryModule,
   ],
   controllers: [AppController],
+  providers: [WebsocketGateway],
 })
 export class AppModule {}
