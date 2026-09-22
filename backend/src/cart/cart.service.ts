@@ -5,21 +5,25 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddToCartDto } from './dto/add-to-cart.dto';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class CartService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly websocketGateway: WebsocketGateway,
+  ) {}
 
   async addToCart(userId: string, dto: AddToCartDto) {
     const now = new Date();
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`
-  SELECT id
-  FROM "FlashSale"
-  WHERE id = ${dto.flashSaleId}
-  FOR UPDATE
-`;
+      SELECT id
+      FROM "FlashSale"
+      WHERE id = ${dto.flashSaleId}
+      FOR UPDATE
+    `;
 
       const flashSale = await tx.flashSale.findUnique({
         where: {
@@ -62,7 +66,7 @@ export class CartService {
         },
       });
 
-      await tx.flashSale.update({
+      const updatedFlashSale = await tx.flashSale.update({
         where: {
           id: flashSale.id,
         },
@@ -73,8 +77,20 @@ export class CartService {
         },
       });
 
-      return cart;
+      return {
+        cart,
+        availableQuantity: updatedFlashSale.availableQuantity,
+        soldQuantity: updatedFlashSale.soldQuantity,
+      };
     });
+
+    this.websocketGateway.emitStockUpdated(
+      dto.flashSaleId,
+      result.availableQuantity,
+      result.soldQuantity,
+    );
+
+    return result.cart;
   }
   async getActiveCart(userId: string) {
     return this.prisma.cart.findFirst({

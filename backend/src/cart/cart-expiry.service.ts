@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class CartExpiryService {
   private readonly logger = new Logger(CartExpiryService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly websocketGateway: WebsocketGateway,
+  ) {}
 
   @Cron('*/5 * * * * *')
   async handleExpiredCarts() {
@@ -25,7 +29,7 @@ export class CartExpiryService {
     });
 
     for (const cart of expiredCarts) {
-      await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction(async (tx) => {
         const updatedCart = await tx.cart.updateMany({
           where: {
             id: cart.id,
@@ -37,11 +41,17 @@ export class CartExpiryService {
         });
 
         if (updatedCart.count === 0) {
-          return;
+          return [];
         }
 
+        const updatedFlashSales: {
+          flashSaleId: string;
+          availableQuantity: number;
+          soldQuantity: number;
+        }[] = [];
+
         for (const item of cart.items) {
-          await tx.flashSale.update({
+          const flashSale = await tx.flashSale.update({
             where: {
               id: item.flashSaleId,
             },
@@ -51,8 +61,24 @@ export class CartExpiryService {
               },
             },
           });
+
+          updatedFlashSales.push({
+            flashSaleId: flashSale.id,
+            availableQuantity: flashSale.availableQuantity,
+            soldQuantity: flashSale.soldQuantity,
+          });
         }
+
+        return updatedFlashSales;
       });
+
+      for (const flashSale of result) {
+        this.websocketGateway.emitStockUpdated(
+          flashSale.flashSaleId,
+          flashSale.availableQuantity,
+          flashSale.soldQuantity,
+        );
+      }
 
       this.logger.log(`Expired cart: ${cart.id}`);
     }
