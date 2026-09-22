@@ -208,6 +208,13 @@ export class PaymentsService {
         }[] = [];
 
         for (const item of currentPayment.order.items) {
+          await tx.$queryRaw`
+          SELECT id
+          FROM "FlashSale"
+          WHERE id = ${item.flashSaleId}
+          FOR UPDATE
+        `;
+
           const flashSale = await tx.flashSale.update({
             where: {
               id: item.flashSaleId,
@@ -252,8 +259,37 @@ export class PaymentsService {
         },
       });
 
+      const stockUpdates: {
+        flashSaleId: string;
+        availableQuantity: number;
+        soldQuantity: number;
+      }[] = [];
+
       for (const item of currentPayment.order.items) {
-        await tx.flashSale.update({
+        await tx.$queryRaw`
+        SELECT id
+        FROM "FlashSale"
+        WHERE id = ${item.flashSaleId}
+        FOR UPDATE
+      `;
+
+        const flashSale = await tx.flashSale.findUnique({
+          where: {
+            id: item.flashSaleId,
+          },
+        });
+
+        if (!flashSale) {
+          throw new NotFoundException('Flash sale not found');
+        }
+
+        const now = new Date();
+
+        if (flashSale.finishedAt !== null || now >= flashSale.endsAt) {
+          continue;
+        }
+
+        const updatedFlashSale = await tx.flashSale.update({
           where: {
             id: item.flashSaleId,
           },
@@ -263,15 +299,23 @@ export class PaymentsService {
             },
           },
         });
+
+        stockUpdates.push({
+          flashSaleId: updatedFlashSale.id,
+          availableQuantity: updatedFlashSale.availableQuantity,
+          soldQuantity: updatedFlashSale.soldQuantity,
+        });
       }
 
       return {
         orderId,
         orderStatus: 'PAYMENT_FAILED',
         paymentStatus: 'FAILED',
+        stockUpdates,
       };
     });
-    if (result === 'SUCCESS' && paymentResult.stockUpdates) {
+
+    if (paymentResult.stockUpdates) {
       for (const stock of paymentResult.stockUpdates) {
         this.websocketGateway.emitStockUpdated(
           stock.flashSaleId,

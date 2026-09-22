@@ -51,7 +51,21 @@ export class CartExpiryService {
         }[] = [];
 
         for (const item of cart.items) {
-          const flashSale = await tx.flashSale.update({
+          const flashSale = await tx.flashSale.findUnique({
+            where: {
+              id: item.flashSaleId,
+            },
+          });
+
+          if (!flashSale) {
+            continue;
+          }
+
+          if (flashSale.finishedAt !== null || now >= flashSale.endsAt) {
+            continue;
+          }
+
+          const updatedFlashSale = await tx.flashSale.update({
             where: {
               id: item.flashSaleId,
             },
@@ -63,12 +77,11 @@ export class CartExpiryService {
           });
 
           updatedFlashSales.push({
-            flashSaleId: flashSale.id,
-            availableQuantity: flashSale.availableQuantity,
-            soldQuantity: flashSale.soldQuantity,
+            flashSaleId: updatedFlashSale.id,
+            availableQuantity: updatedFlashSale.availableQuantity,
+            soldQuantity: updatedFlashSale.soldQuantity,
           });
         }
-
         return updatedFlashSales;
       });
 
