@@ -12,7 +12,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { WebsocketGateway } from './websocket/websocket.gateway';
 import { WebsocketModule } from './websocket/websocket.module';
 import { OrderExpiryModule } from './order-expiry/order-expiry.module';
-
+import { AdminModule } from './admin/admin.module';
 @Module({
   imports: [
     PrismaModule,
@@ -26,6 +26,7 @@ import { OrderExpiryModule } from './order-expiry/order-expiry.module';
     PaymentsModule,
     WebsocketModule,
     OrderExpiryModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [WebsocketGateway],
