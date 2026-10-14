@@ -15,7 +15,6 @@ export class CartExpiryService {
   @Cron('*/5 * * * * *')
   async handleExpiredCarts() {
     const now = new Date();
-
     const expiredCarts = await this.prisma.cart.findMany({
       where: {
         status: 'ACTIVE',
