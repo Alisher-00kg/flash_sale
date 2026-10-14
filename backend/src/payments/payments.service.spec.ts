@@ -252,6 +252,76 @@ describe('PaymentsService', () => {
     expect(websocketGateway.emitStockUpdated).not.toHaveBeenCalled();
     expect(notificationsService.sendEmail).not.toHaveBeenCalled();
   });
+  it('should allow a pending payment to be completed later', async () => {
+    const payment = makePayment();
+
+    prisma.payment.findUnique
+      .mockResolvedValueOnce(payment)
+      .mockResolvedValueOnce(payment);
+
+    const pendingResult = await service.processMockPayment(
+      userId,
+      orderId,
+      'PENDING',
+    );
+
+    expect(pendingResult).toMatchObject({
+      orderId,
+      orderStatus: 'PAYMENT_PROCESSING',
+      paymentStatus: 'PENDING',
+    });
+
+    prisma.payment.findUnique.mockResolvedValue({
+      ...payment,
+      order: {
+        ...payment.order,
+        status: 'PAYMENT_PROCESSING',
+      },
+    });
+
+    prisma.tx.payment.findUnique.mockResolvedValue({
+      ...payment,
+      order: {
+        ...payment.order,
+        status: 'PAYMENT_PROCESSING',
+      },
+    });
+
+    prisma.tx.flashSale.findUnique.mockResolvedValue({
+      id: flashSaleId,
+      availableQuantity: 4,
+      soldQuantity: 1,
+      finishedAt: null,
+      endsAt: new Date(Date.now() + 60_000),
+    });
+
+    prisma.tx.flashSale.update.mockResolvedValue({
+      id: flashSaleId,
+      availableQuantity: 4,
+      soldQuantity: 2,
+    });
+
+    prisma.order.findUnique.mockResolvedValue({
+      id: orderId,
+      totalAmount: 100,
+      user: { email: 'buyer@example.com' },
+    });
+
+    const successResult = await service.processMockPayment(
+      userId,
+      orderId,
+      'SUCCESS',
+    );
+
+    expect(successResult).toEqual(
+      expect.objectContaining({
+        orderStatus: 'PAID',
+        paymentStatus: 'SUCCESS',
+      }),
+    );
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
   it('should wait for delay before processing payment', async () => {
     const payment = makePayment();
 
@@ -273,6 +343,39 @@ describe('PaymentsService', () => {
 
     expect(Date.now() - start).toBeGreaterThanOrEqual(40);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+  it('should complete payment after reservation expires if payment was already started', async () => {
+    const payment = makePayment();
+
+    const expiredReservationPayment = {
+      ...payment,
+      order: {
+        ...payment.order,
+        status: 'PAYMENT_PROCESSING',
+        reservedUntil: new Date(Date.now() - 60_000),
+      },
+    };
+
+    prisma.payment.findUnique.mockResolvedValue(expiredReservationPayment);
+    prisma.tx.payment.findUnique.mockResolvedValue(expiredReservationPayment);
+    prisma.tx.flashSale.findUnique.mockResolvedValue({
+      id: flashSaleId,
+      availableQuantity: 4,
+      soldQuantity: 1,
+      finishedAt: null,
+      endsAt: new Date(Date.now() + 60_000),
+    });
+    prisma.tx.flashSale.update.mockResolvedValue({});
+    prisma.order.findUnique.mockResolvedValue(null);
+
+    const result = await service.processMockPayment(userId, orderId, 'SUCCESS');
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        orderStatus: 'PAID',
+        paymentStatus: 'SUCCESS',
+      }),
+    );
   });
   it('should mark the order as PAID and update stock after successful payment', async () => {
     const payment = makePayment();

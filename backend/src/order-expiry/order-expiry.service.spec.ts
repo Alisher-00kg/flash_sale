@@ -69,7 +69,24 @@ describe('OrderExpiryService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(websocketGateway.emitStockUpdated).not.toHaveBeenCalled();
   });
+  it('should not expire orders whose payment is processing', async () => {
+    prisma.order.findMany.mockResolvedValue([]);
 
+    await service.handleExpiredOrders();
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith({
+      where: {
+        status: 'PENDING_PAYMENT',
+        reservedUntil: { lte: expect.any(Date) },
+      },
+      include: { items: true },
+    });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(tx.order.updateMany).not.toHaveBeenCalled();
+    expect(tx.flashSale.update).not.toHaveBeenCalled();
+    expect(websocketGateway.emitStockUpdated).not.toHaveBeenCalled();
+  });
   it('should expire an order, restore stock and emit a stock update', async () => {
     const order = {
       id: 'order-1',
