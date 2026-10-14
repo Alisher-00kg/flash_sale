@@ -6,12 +6,16 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
+import { Logger } from '@nestjs/common';
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly websocketGateway: WebsocketGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async startPayment(userId: string, orderId: string) {
@@ -182,24 +186,11 @@ export class PaymentsService {
       }
 
       if (result === 'SUCCESS') {
-        await tx.payment.update({
-          where: {
-            id: currentPayment.id,
-          },
-          data: {
-            status: 'SUCCESS',
-            externalId: `mock-${currentPayment.id}`,
-          },
-        });
-
-        await tx.order.update({
-          where: {
-            id: orderId,
-          },
-          data: {
-            status: 'PAID',
-          },
-        });
+        if (currentPayment.order.status !== 'PAYMENT_PROCESSING') {
+          throw new BadRequestException(
+            `Cannot complete payment for order with status ${currentPayment.order.status}`,
+          );
+        }
 
         const stockUpdates: {
           flashSaleId: string;
@@ -209,16 +200,22 @@ export class PaymentsService {
 
         for (const item of currentPayment.order.items) {
           await tx.$queryRaw`
-          SELECT id
-          FROM "FlashSale"
-          WHERE id = ${item.flashSaleId}
-          FOR UPDATE
-        `;
+            SELECT id
+            FROM "FlashSale"
+            WHERE id = ${item.flashSaleId}
+            FOR UPDATE
+          `;
 
-          const flashSale = await tx.flashSale.update({
-            where: {
-              id: item.flashSaleId,
-            },
+          const flashSale = await tx.flashSale.findUnique({
+            where: { id: item.flashSaleId },
+          });
+
+          if (!flashSale) {
+            throw new NotFoundException('Flash sale not found');
+          }
+
+          const updatedFlashSale = await tx.flashSale.update({
+            where: { id: item.flashSaleId },
             data: {
               soldQuantity: {
                 increment: item.quantity,
@@ -227,11 +224,24 @@ export class PaymentsService {
           });
 
           stockUpdates.push({
-            flashSaleId: flashSale.id,
-            availableQuantity: flashSale.availableQuantity,
-            soldQuantity: flashSale.soldQuantity,
+            flashSaleId: updatedFlashSale.id,
+            availableQuantity: updatedFlashSale.availableQuantity,
+            soldQuantity: updatedFlashSale.soldQuantity,
           });
         }
+
+        await tx.payment.update({
+          where: { id: currentPayment.id },
+          data: {
+            status: 'SUCCESS',
+            externalId: `mock-${currentPayment.id}`,
+          },
+        });
+
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: 'PAID' },
+        });
 
         return {
           orderId,
@@ -242,21 +252,13 @@ export class PaymentsService {
       }
 
       await tx.payment.update({
-        where: {
-          id: currentPayment.id,
-        },
-        data: {
-          status: 'FAILED',
-        },
+        where: { id: currentPayment.id },
+        data: { status: 'FAILED' },
       });
 
       await tx.order.update({
-        where: {
-          id: orderId,
-        },
-        data: {
-          status: 'PAYMENT_FAILED',
-        },
+        where: { id: orderId },
+        data: { status: 'PAYMENT_FAILED' },
       });
 
       const stockUpdates: {
@@ -267,16 +269,14 @@ export class PaymentsService {
 
       for (const item of currentPayment.order.items) {
         await tx.$queryRaw`
-        SELECT id
-        FROM "FlashSale"
-        WHERE id = ${item.flashSaleId}
-        FOR UPDATE
-      `;
+          SELECT id
+          FROM "FlashSale"
+          WHERE id = ${item.flashSaleId}
+          FOR UPDATE
+        `;
 
         const flashSale = await tx.flashSale.findUnique({
-          where: {
-            id: item.flashSaleId,
-          },
+          where: { id: item.flashSaleId },
         });
 
         if (!flashSale) {
@@ -290,9 +290,7 @@ export class PaymentsService {
         }
 
         const updatedFlashSale = await tx.flashSale.update({
-          where: {
-            id: item.flashSaleId,
-          },
+          where: { id: item.flashSaleId },
           data: {
             availableQuantity: {
               increment: item.quantity,
@@ -321,6 +319,30 @@ export class PaymentsService {
           stock.flashSaleId,
           stock.availableQuantity,
           stock.soldQuantity,
+        );
+      }
+    }
+
+    // Письмо отправляем только после новой успешной оплаты.
+    // Повторный запрос не содержит stockUpdates.
+    if (paymentResult.orderStatus === 'PAID' && paymentResult.stockUpdates) {
+      try {
+        const order = await this.prisma.order.findUnique({
+          where: { id: orderId },
+          include: { user: true },
+        });
+
+        if (order) {
+          await this.notificationsService.sendEmail(
+            order.user.email,
+            `Оплата подтверждена — заказ ${order.id}`,
+            `Здравствуйте!\n\nОплата заказа ${order.id} прошла успешно.\nСумма заказа: ${order.totalAmount}.\n\nСпасибо за покупку!`,
+          );
+        }
+      } catch (error) {
+        this.logger.error(
+          `Не удалось отправить письмо для заказа ${orderId}`,
+          error instanceof Error ? error.stack : String(error),
         );
       }
     }

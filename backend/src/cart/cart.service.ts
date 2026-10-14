@@ -42,6 +42,9 @@ export class CartService {
       if (now >= flashSale.endsAt) {
         throw new BadRequestException('Flash sale has ended');
       }
+      if (flashSale.finishedAt !== null) {
+        throw new BadRequestException('Flash sale has finished');
+      }
 
       if (flashSale.availableQuantity < dto.quantity) {
         throw new BadRequestException('Not enough stock');

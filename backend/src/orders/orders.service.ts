@@ -80,4 +80,18 @@ export class OrdersService {
       return order;
     });
   }
+  async findByUser(userId: string) {
+    return this.prisma.order.findMany({
+      where: {
+        userId,
+      },
+      include: {
+        items: true,
+        payment: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
 }

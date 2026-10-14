@@ -1,4 +1,4 @@
-import { Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Controller, Post, Req, Get, UseGuards } from '@nestjs/common';
 
 import { OrdersService } from './orders.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -11,5 +11,10 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   createOrder(@Req() request: any) {
     return this.ordersService.createFromCart(request.user.userId);
+  }
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  getOrders(@Req() request: any) {
+    return this.ordersService.findByUser(request.user.userId);
   }
 }

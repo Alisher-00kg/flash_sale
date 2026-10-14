@@ -15,7 +15,6 @@ export class FlashSaleFinishService {
   @Cron('*/5 * * * * *')
   async handleFinishedFlashSales() {
     const now = new Date();
-
     const finishedSales = await this.prisma.flashSale.findMany({
       where: {
         endsAt: {
@@ -23,9 +22,11 @@ export class FlashSaleFinishService {
         },
         finishedAt: null,
       },
+
       select: {
         id: true,
         availableQuantity: true,
+        soldQuantity: true,
       },
     });
 
@@ -86,9 +87,19 @@ export class FlashSaleFinishService {
           }
         }
 
+        const finalSale = await tx.flashSale.findUniqueOrThrow({
+          where: { id: sale.id },
+          select: {
+            id: true,
+            availableQuantity: true,
+            soldQuantity: true,
+          },
+        });
+
         return {
-          flashSaleId: sale.id,
-          availableQuantity: 0,
+          flashSaleId: finalSale.id,
+          availableQuantity: finalSale.availableQuantity,
+          soldQuantity: finalSale.soldQuantity,
         };
       });
 
@@ -99,7 +110,7 @@ export class FlashSaleFinishService {
       this.websocketGateway.emitStockUpdated(
         result.flashSaleId,
         result.availableQuantity,
-        0,
+        result.soldQuantity,
       );
 
       this.logger.log(

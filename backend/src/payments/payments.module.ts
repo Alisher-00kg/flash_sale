@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { WebsocketModule } from '../websocket/websocket.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { WebsocketModule } from '../websocket/websocket.module';
       defaultStrategy: 'jwt',
     }),
     WebsocketModule,
+    NotificationsModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],
