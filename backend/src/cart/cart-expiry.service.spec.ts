@@ -12,6 +12,7 @@ describe('CartExpiryService', () => {
   let tx: {
     cart: { updateMany: jest.Mock };
     flashSale: { findUnique: jest.Mock; update: jest.Mock };
+    $queryRaw: jest.Mock;
   };
   let websocketGateway: { emitStockUpdated: jest.Mock };
 
@@ -24,6 +25,7 @@ describe('CartExpiryService', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      $queryRaw: jest.fn(),
     };
 
     prisma = {
@@ -219,6 +221,7 @@ describe('CartExpiryService', () => {
     await service.handleExpiredCarts();
 
     expect(tx.flashSale.findUnique).toHaveBeenCalledTimes(3);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
     expect(tx.flashSale.update).toHaveBeenCalledTimes(1);
     expect(websocketGateway.emitStockUpdated).toHaveBeenCalledTimes(1);
     expect(websocketGateway.emitStockUpdated).toHaveBeenCalledWith(

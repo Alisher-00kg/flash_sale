@@ -50,6 +50,13 @@ export class CartExpiryService {
         }[] = [];
 
         for (const item of cart.items) {
+          await tx.$queryRaw`
+            SELECT id
+            FROM "FlashSale"
+            WHERE id = ${item.flashSaleId}
+            FOR UPDATE
+          `;
+
           const flashSale = await tx.flashSale.findUnique({
             where: {
               id: item.flashSaleId,
