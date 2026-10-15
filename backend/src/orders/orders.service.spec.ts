@@ -38,7 +38,7 @@ describe('OrdersService', () => {
     tx = {
       cart: {
         findFirst: jest.fn(),
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       order: {
         create: jest.fn().mockResolvedValue({
@@ -108,8 +108,13 @@ describe('OrdersService', () => {
       include: { items: true },
     });
 
-    expect(tx.cart.update).toHaveBeenCalledWith({
-      where: { id: 'cart-1' },
+    expect(tx.cart.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'cart-1',
+        userId,
+        status: 'ACTIVE',
+        expiresAt: { gt: expect.any(Date) },
+      },
       data: { status: 'CHECKED_OUT' },
     });
   });
@@ -122,19 +127,18 @@ describe('OrdersService', () => {
     );
 
     expect(tx.order.create).not.toHaveBeenCalled();
-    expect(tx.cart.update).not.toHaveBeenCalled();
+    expect(tx.cart.updateMany).not.toHaveBeenCalled();
   });
 
   it('should throw when the cart has expired', async () => {
-    tx.cart.findFirst.mockResolvedValue(
-      makeCart({ expiresAt: new Date(Date.now() - 60_000) }),
-    );
+    tx.cart.findFirst.mockResolvedValue(null);
 
     await expect(service.createFromCart(userId)).rejects.toThrow(
-      BadRequestException,
+      NotFoundException,
     );
 
     expect(tx.order.create).not.toHaveBeenCalled();
+    expect(tx.cart.updateMany).not.toHaveBeenCalled();
   });
 
   it('should throw when the cart is empty', async () => {
@@ -146,7 +150,16 @@ describe('OrdersService', () => {
 
     expect(tx.order.create).not.toHaveBeenCalled();
   });
+  it('should not create an order if the cart was already claimed', async () => {
+    tx.cart.findFirst.mockResolvedValue(makeCart());
+    tx.cart.updateMany.mockResolvedValue({ count: 0 });
 
+    await expect(service.createFromCart(userId)).rejects.toThrow(
+      BadRequestException,
+    );
+
+    expect(tx.order.create).not.toHaveBeenCalled();
+  });
   it('should return a user’s orders newest first', async () => {
     const orders = [{ id: 'order-1' }, { id: 'order-2' }];
     prisma.order.findMany.mockResolvedValue(orders);

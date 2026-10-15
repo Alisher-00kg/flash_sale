@@ -11,10 +11,13 @@ export class OrdersService {
 
   async createFromCart(userId: string) {
     return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+
       const cart = await tx.cart.findFirst({
         where: {
           userId,
           status: 'ACTIVE',
+          expiresAt: { gt: now },
         },
         include: {
           items: {
@@ -30,17 +33,31 @@ export class OrdersService {
       });
 
       if (!cart) {
-        throw new NotFoundException('Active cart not found');
-      }
-
-      const now = new Date();
-
-      if (cart.expiresAt <= now) {
-        throw new BadRequestException('Cart has expired');
+        throw new NotFoundException('Active cart not found or expired');
       }
 
       if (cart.items.length === 0) {
         throw new BadRequestException('Cart is empty');
+      }
+
+      // Claim the cart atomically before creating the order.
+      const claimNow = new Date();
+      const claimedCart = await tx.cart.updateMany({
+        where: {
+          id: cart.id,
+          userId,
+          status: 'ACTIVE',
+          expiresAt: { gt: claimNow },
+        },
+        data: {
+          status: 'CHECKED_OUT',
+        },
+      });
+
+      if (claimedCart.count !== 1) {
+        throw new BadRequestException(
+          'Cart has expired or has already been checked out',
+        );
       }
 
       const totalAmount = cart.items.reduce(
@@ -48,7 +65,7 @@ export class OrdersService {
         0,
       );
 
-      const order = await tx.order.create({
+      return tx.order.create({
         data: {
           userId,
           status: 'PENDING_PAYMENT',
@@ -67,19 +84,9 @@ export class OrdersService {
           items: true,
         },
       });
-
-      await tx.cart.update({
-        where: {
-          id: cart.id,
-        },
-        data: {
-          status: 'CHECKED_OUT',
-        },
-      });
-
-      return order;
     });
   }
+
   async findByUser(userId: string) {
     return this.prisma.order.findMany({
       where: {
