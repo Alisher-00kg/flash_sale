@@ -11,6 +11,14 @@ export class OrdersService {
 
   async createFromCart(userId: string) {
     return this.prisma.$transaction(async (tx) => {
+      // Share the same per-user lock as CartService.addToCart.
+      await tx.$queryRaw`
+        SELECT id
+        FROM "User"
+        WHERE id = ${userId}
+        FOR UPDATE
+      `;
+
       const now = new Date();
 
       const cart = await tx.cart.findFirst({

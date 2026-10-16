@@ -36,6 +36,7 @@ describe('OrdersService', () => {
 
   beforeEach(async () => {
     tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
       cart: {
         findFirst: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
