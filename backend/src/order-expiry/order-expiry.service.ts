@@ -20,32 +20,59 @@ export class OrderExpiryService {
     const expiredOrders = await this.prisma.order.findMany({
       where: {
         status: 'PENDING_PAYMENT',
-        reservedUntil: {
-          lte: now,
-        },
+        reservedUntil: { lte: now },
       },
-      include: {
-        items: true,
-      },
+      select: { id: true },
     });
 
-    for (const order of expiredOrders) {
+    for (const candidate of expiredOrders) {
       const stockUpdates = await this.prisma.$transaction(async (tx) => {
+        // Match startPayment's lock order: lock the order first.
+        await tx.$queryRaw`
+          SELECT id
+          FROM "Order"
+          WHERE id = ${candidate.id}
+          FOR UPDATE
+        `;
+
+        const order = await tx.order.findUnique({
+          where: { id: candidate.id },
+          include: { items: true },
+        });
+
+        if (
+          !order ||
+          order.status !== 'PENDING_PAYMENT' ||
+          order.reservedUntil > now
+        ) {
+          return [];
+        }
+
         const updatedOrder = await tx.order.updateMany({
           where: {
             id: order.id,
             status: 'PENDING_PAYMENT',
-            reservedUntil: {
-              lte: now,
-            },
+            reservedUntil: { lte: now },
           },
-          data: {
-            status: 'EXPIRED',
-          },
+          data: { status: 'EXPIRED' },
         });
 
         if (updatedOrder.count === 0) {
           return [];
+        }
+
+        const flashSaleIds = [
+          ...new Set(order.items.map((item) => item.flashSaleId)),
+        ].sort();
+
+        // Lock flash sales in a stable order.
+        for (const flashSaleId of flashSaleIds) {
+          await tx.$queryRaw`
+            SELECT id
+            FROM "FlashSale"
+            WHERE id = ${flashSaleId}
+            FOR UPDATE
+          `;
         }
 
         const updates: {
@@ -55,35 +82,22 @@ export class OrderExpiryService {
         }[] = [];
 
         for (const item of order.items) {
-          await tx.$queryRaw`
-            SELECT id
-            FROM "FlashSale"
-            WHERE id = ${item.flashSaleId}
-            FOR UPDATE
-          `;
-
           const flashSale = await tx.flashSale.findUnique({
-            where: {
-              id: item.flashSaleId,
-            },
+            where: { id: item.flashSaleId },
           });
 
-          if (!flashSale) {
-            continue;
-          }
-
-          if (flashSale.finishedAt !== null || now >= flashSale.endsAt) {
+          if (
+            !flashSale ||
+            flashSale.finishedAt !== null ||
+            now >= flashSale.endsAt
+          ) {
             continue;
           }
 
           const updatedFlashSale = await tx.flashSale.update({
-            where: {
-              id: item.flashSaleId,
-            },
+            where: { id: item.flashSaleId },
             data: {
-              availableQuantity: {
-                increment: item.quantity,
-              },
+              availableQuantity: { increment: item.quantity },
             },
           });
 
@@ -105,7 +119,7 @@ export class OrderExpiryService {
         );
       }
 
-      this.logger.log(`Expired order: ${order.id}`);
+      this.logger.log(`Processed expired order: ${candidate.id}`);
     }
   }
 }
