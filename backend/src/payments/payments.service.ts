@@ -336,7 +336,7 @@ export class PaymentsService {
           await this.notificationsService.sendEmail(
             order.user.email,
             `Оплата подтверждена — заказ ${order.id}`,
-            `Здравствуйте!\n\nОплата заказа ${order.id} прошла успешно.\nСумма заказа: ${order.totalAmount}.\n\nСпасибо за покупку!`,
+            `Здравствуйте!\n\nОплата заказа ${order.id} прошла успешно.\nСумма заказа: ${order.totalAmount.toString()}.\n\nСпасибо за покупку!`,
           );
         }
       } catch (error) {
