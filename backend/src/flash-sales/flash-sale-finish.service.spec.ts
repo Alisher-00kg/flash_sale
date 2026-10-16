@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { FlashSaleFinishService } from './flash-sale-finish.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('FlashSaleFinishService', () => {
   let service: FlashSaleFinishService;
@@ -24,6 +25,7 @@ describe('FlashSaleFinishService', () => {
     };
   };
   let websocketGateway: { emitStockUpdated: jest.Mock };
+  let notificationsService: { sendEmail: jest.Mock };
 
   beforeEach(async () => {
     tx = {
@@ -51,12 +53,16 @@ describe('FlashSaleFinishService', () => {
     websocketGateway = {
       emitStockUpdated: jest.fn(),
     };
+    notificationsService = {
+      sendEmail: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FlashSaleFinishService,
         { provide: PrismaService, useValue: prisma },
         { provide: WebsocketGateway, useValue: websocketGateway },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 
@@ -146,8 +152,8 @@ describe('FlashSaleFinishService', () => {
     ]);
     tx.flashSale.updateMany.mockResolvedValue({ count: 1 });
     tx.cart.findMany.mockResolvedValue([
-      { id: 'cart-empty' },
-      { id: 'cart-has-other-items' },
+      { id: 'cart-empty', user: { email: 'buyer@example.com' } },
+      { id: 'cart-has-other-items', user: { email: 'buyer@example.com' } },
     ]);
     tx.cartItem.count
       .mockResolvedValueOnce(0)
@@ -165,7 +171,10 @@ describe('FlashSaleFinishService', () => {
         status: 'ACTIVE',
         items: { some: { flashSaleId: 'sale-1' } },
       },
-      select: { id: true },
+      select: {
+        id: true,
+        user: { select: { email: true } },
+      },
     });
     expect(tx.cartItem.deleteMany).toHaveBeenCalledTimes(2);
     expect(tx.cartItem.deleteMany).toHaveBeenCalledWith({
@@ -180,6 +189,12 @@ describe('FlashSaleFinishService', () => {
       'sale-1',
       0,
       3,
+    );
+    expect(notificationsService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(notificationsService.sendEmail).toHaveBeenCalledWith(
+      'buyer@example.com',
+      'Flash sale has ended',
+      'A flash sale item in your cart is no longer available because the sale has ended.',
     );
   });
 

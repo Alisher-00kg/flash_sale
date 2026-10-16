@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
+
 
 @Injectable()
 export class FlashSaleFinishService {
@@ -10,6 +12,7 @@ export class FlashSaleFinishService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly websocketGateway: WebsocketGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   @Cron('*/5 * * * * *')
@@ -58,8 +61,17 @@ export class FlashSaleFinishService {
           },
           select: {
             id: true,
+            user: {
+              select: {
+                email: true,
+              },
+            },
           },
         });
+
+        const recipientEmails = [
+          ...new Set(carts.map((cart) => cart.user.email)),
+        ];
 
         for (const cart of carts) {
           await tx.cartItem.deleteMany({
@@ -100,6 +112,7 @@ export class FlashSaleFinishService {
           flashSaleId: finalSale.id,
           availableQuantity: finalSale.availableQuantity,
           soldQuantity: finalSale.soldQuantity,
+          recipientEmails,
         };
       });
 
@@ -116,6 +129,22 @@ export class FlashSaleFinishService {
       this.logger.log(
         `Flash sale finished: ${result.flashSaleId}, available: 0`,
       );
+
+      for (const email of result.recipientEmails) {
+        try {
+          await this.notificationsService.sendEmail(
+            email,
+            'Flash sale has ended',
+            'A flash sale item in your cart is no longer available because the sale has ended.',
+          );
+        } catch (error) {
+          this.logger.error(
+            `Failed to notify ${email} about finished flash sale ${result.flashSaleId}`,
+            error instanceof Error ? error.stack : String(error),
+          );
+        }
+      }
+
     }
   }
 }
