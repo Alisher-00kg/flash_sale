@@ -163,4 +163,82 @@ describe('CartService', () => {
     expect(createCall.data.userId).toBe(userId);
     expect(websocketGateway.emitStockUpdated).toHaveBeenCalledTimes(1);
   });
+
+  it('should reject adding an item before the flash sale starts without reserving stock', async () => {
+    tx.flashSale.findUnique.mockResolvedValue(
+      makeFlashSale({
+        startsAt: new Date(Date.now() + 60_000),
+      }),
+    );
+
+    await expect(
+      service.addToCart(userId, { flashSaleId, quantity: 1 }),
+    ).rejects.toThrow('Flash sale has not started');
+
+    expect(tx.cart.findFirst).not.toHaveBeenCalled();
+    expect(tx.cart.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.update).not.toHaveBeenCalled();
+    expect(tx.flashSale.update).not.toHaveBeenCalled();
+    expect(websocketGateway.emitStockUpdated).not.toHaveBeenCalled();
+  });
+
+
+  it('should reject adding an item after the flash sale ends without reserving stock', async () => {
+    tx.flashSale.findUnique.mockResolvedValue(
+      makeFlashSale({
+        endsAt: new Date(Date.now() - 60_000),
+      }),
+    );
+
+    await expect(
+      service.addToCart(userId, { flashSaleId, quantity: 1 }),
+    ).rejects.toThrow('Flash sale has ended');
+
+    expect(tx.cart.findFirst).not.toHaveBeenCalled();
+    expect(tx.cart.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.update).not.toHaveBeenCalled();
+    expect(tx.flashSale.update).not.toHaveBeenCalled();
+    expect(websocketGateway.emitStockUpdated).not.toHaveBeenCalled();
+  });
+
+
+  it('should reject a reservation that exceeds available stock', async () => {
+    tx.flashSale.findUnique.mockResolvedValue(
+      makeFlashSale({ availableQuantity: 2 }),
+    );
+
+    await expect(
+      service.addToCart(userId, { flashSaleId, quantity: 3 }),
+    ).rejects.toThrow('Not enough stock');
+
+    expect(tx.cart.findFirst).not.toHaveBeenCalled();
+    expect(tx.cart.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.update).not.toHaveBeenCalled();
+    expect(tx.flashSale.update).not.toHaveBeenCalled();
+    expect(websocketGateway.emitStockUpdated).not.toHaveBeenCalled();
+  });
+
+
+  it('should reject reservations for an already finished flash sale', async () => {
+    tx.flashSale.findUnique.mockResolvedValue(
+      makeFlashSale({
+        finishedAt: new Date(Date.now() - 1_000),
+      }),
+    );
+
+    await expect(
+      service.addToCart(userId, { flashSaleId, quantity: 1 }),
+    ).rejects.toThrow('Flash sale has finished');
+
+    expect(tx.cart.findFirst).not.toHaveBeenCalled();
+    expect(tx.cart.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.create).not.toHaveBeenCalled();
+    expect(tx.cartItem.update).not.toHaveBeenCalled();
+    expect(tx.flashSale.update).not.toHaveBeenCalled();
+    expect(websocketGateway.emitStockUpdated).not.toHaveBeenCalled();
+  });
+
 });
